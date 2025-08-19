@@ -1,8 +1,9 @@
 import os
-import tempfile
+import io
+import json
 from flask import Flask, request, send_file, jsonify
 from werkzeug.utils import secure_filename
-from main import process_file
+from main import process_bytes  # deve retornar bytes, str ou dict do JSON
 
 app = Flask(__name__)
 
@@ -12,7 +13,7 @@ def process_single_file():
         return jsonify({"error": "arquivo não enviado"}), 400
 
     file = request.files["file"]
-    if file.filename == "":
+    if not file or file.filename == "":
         return jsonify({"error": "nome de arquivo vazio"}), 400
 
     ocr = str(request.form.get("ocr", "false")).lower() == "true"
@@ -20,20 +21,26 @@ def process_single_file():
     filename = secure_filename(file.filename)
     base, _ = os.path.splitext(filename)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        in_path = os.path.join(tmpdir, filename)
-        out_path = os.path.join(tmpdir, f"{base}.json")
+    pdf_bytes = file.read()
+    json_out = process_bytes(pdf_bytes, ocr=ocr)  # sem gravação em disco
 
-        file.save(in_path)
-        process_file(in_path, out_path, ocr=ocr)
+    if isinstance(json_out, dict):
+        json_bytes = json.dumps(json_out, ensure_ascii=False).encode("utf-8")
+    elif isinstance(json_out, str):
+        json_bytes = json_out.encode("utf-8")
+    else:
+        json_bytes = json_out  # já em bytes
 
-        return send_file(
-            out_path,
-            mimetype="application/json",
-            as_attachment=True,
-            download_name=f"{base}.json",
-            max_age=0,
-        )
+    buf = io.BytesIO(json_bytes)
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        mimetype="application/json",
+        as_attachment=True,
+        download_name=f"{base}.json",
+        max_age=0,
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)

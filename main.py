@@ -1,20 +1,23 @@
-import os
+import json
+from io import BytesIO
+from typing import Optional
+
 from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
+from docling.datamodel.base_models import InputFormat, DocumentStream, ConversionStatus
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 
-def process_file(input_path: str, output_path: str, ocr: bool = False):
+def process_bytes(pdf_bytes: bytes, ocr: bool = False, filename: Optional[str] = None) -> bytes:
     """
-    Processa um único arquivo PDF com Docling e gera um JSON de saída.
+    Converte um PDF em memória (bytes) para JSON (bytes) usando Docling.
+    Não persiste nada em disco.
 
-    Args:
-        input_path (str): Caminho do arquivo PDF de entrada
-        output_path (str): Caminho do arquivo JSON de saída
-        ocr (bool): Se True, ativa OCR no pipeline
+    :param pdf_bytes: conteúdo do PDF em bytes
+    :param ocr: habilita OCR no pipeline
+    :param filename: nome lógico do arquivo (usado só para metadados)
+    :return: JSON serializado em bytes (UTF-8)
+    :raises RuntimeError: quando a conversão falhar
     """
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
     pdf_opts = PdfPipelineOptions()
     pdf_opts.do_ocr = ocr
 
@@ -22,6 +25,12 @@ def process_file(input_path: str, output_path: str, ocr: bool = False):
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_opts)}
     )
 
-    results = converter.convert_all([input_path], raises_on_error=False)
-    for res in results:
-        res.document.save_as_json(output_path)
+    source = DocumentStream(name=filename or "upload.pdf", stream=BytesIO(pdf_bytes))
+    result = converter.convert(source)
+
+    if result.status != ConversionStatus.SUCCESS:
+        errs = "; ".join(getattr(e, "error_message", str(e)) for e in (result.errors or []))
+        raise RuntimeError(f"Falha na conversão ({result.status}). {errs}")
+
+    data = result.document.export_to_dict()
+    return json.dumps(data, ensure_ascii=False).encode("utf-8")
