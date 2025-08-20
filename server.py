@@ -1,11 +1,31 @@
 import os
 import io
-import json
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, make_response
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from main import process_bytes  # deve retornar bytes, str ou dict do JSON
+from main import process_bytes
+
+ORIGIN = "https://brand-to-json-converter.lovable.app"
 
 app = Flask(__name__)
+CORS(
+    app,
+    resources={r"/process-file": {"origins": [ORIGIN]}},
+    methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+    expose_headers=["Content-Disposition", "Content-Type"],
+    supports_credentials=False,
+    max_age=86400,
+)
+
+@app.route("/process-file", methods=["OPTIONS"])
+def process_file_options():
+    resp = make_response("", 204)
+    resp.headers["Access-Control-Allow-Origin"] = ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+    resp.headers["Access-Control-Max-Age"] = "86400"
+    return resp
 
 @app.post("/process-file")
 def process_single_file():
@@ -22,25 +42,23 @@ def process_single_file():
     base, _ = os.path.splitext(filename)
 
     pdf_bytes = file.read()
-    json_out = process_bytes(pdf_bytes, ocr=ocr)  # sem gravação em disco
+    json_bytes = process_bytes(pdf_bytes, ocr=ocr, filename=filename)
 
-    if isinstance(json_out, dict):
-        json_bytes = json.dumps(json_out, ensure_ascii=False).encode("utf-8")
-    elif isinstance(json_out, str):
-        json_bytes = json_out.encode("utf-8")
-    else:
-        json_bytes = json_out  # já em bytes
+    buf = io.BytesIO(json_bytes); buf.seek(0)
 
-    buf = io.BytesIO(json_bytes)
-    buf.seek(0)
-
-    return send_file(
+    resp = send_file(
         buf,
         mimetype="application/json",
         as_attachment=True,
         download_name=f"{base}.json",
         max_age=0,
+        etag=False,
+        last_modified=None,
+        conditional=False,
     )
+    resp.headers["Access-Control-Allow-Origin"] = ORIGIN
+    resp.headers["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Type"
+    return resp
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
